@@ -1,3 +1,5 @@
+window.IGTracker = { trackFollowing };
+
 function getIgAppId() {
     if (window._sharedData && window._sharedData.config) {
         return window._sharedData.config.viewerId || null;
@@ -79,26 +81,69 @@ async function fetchAllFollowing(maxId = 0, profileId = null) {
 
 async function trackFollowing() {
     const usernameToTrack = getUsernameTracking();
+
     if (!usernameToTrack) {
-        console.error("Không xác định được username để theo dõi.");
-        return;
+        console.error("⚠️ Không xác định được username để theo dõi.");
+        return { newUsers: [], removedUsers: [] };
     }
+
     const localStorageSaveKey = `fl_${usernameToTrack}`;
-    const previousUsernames = JSON.parse(localStorage.getItem(localStorageSaveKey) || "[]");
 
-    const profileId = await fetchUserIDTracking();
-    if (!profileId) {
-        console.error("Không xác định được profile ID.");
-        return;
+    // Load previous usernames from localStorage
+    let previousUsernames = [];
+    try {
+        previousUsernames = JSON.parse(localStorage.getItem(localStorageSaveKey) || "[]");
+    } catch (err) {
+        console.warn("⚠️ Lỗi đọc dữ liệu cũ:", err);
+        previousUsernames = [];
     }
-    const allUsernames = await fetchAllFollowing(0, profileId);
 
-    const newUsers = allUsernames.filter(u => !previousUsernames.includes(u));
-    const removedUsers = previousUsernames.filter(u => !allUsernames.includes(u));
+    // Fetch profile ID
+    let profileId;
+    try {
+        profileId = await fetchUserIDTracking();
+    } catch (err) {
+        console.error("⚠️ Không xác định được profile ID:", err);
+        return { newUsers: [], removedUsers: [] };
+    }
 
-    localStorage.setItem(localStorageSaveKey, JSON.stringify(allUsernames));
+    if (!profileId) {
+        console.error("⚠️ Profile ID rỗng.");
+        return { newUsers: [], removedUsers: [] };
+    }
+
+    // Fetch all following
+    let allUsernames = [];
+    try {
+        allUsernames = await fetchAllFollowing(0, profileId);
+    } catch (err) {
+        console.error("⚠️ Lỗi fetch danh sách following:", err);
+        allUsernames = [];
+    }
+
+    // Use Set for fast comparison
+    const previousSet = new Set(previousUsernames);
+    const allSet = new Set(allUsernames);
+
+    const newUsers = allUsernames.filter(u => !previousSet.has(u));
+    const removedUsers = previousUsernames.filter(u => !allSet.has(u));
+
+    // Save current state
+    try {
+        localStorage.setItem(localStorageSaveKey, JSON.stringify(allUsernames));
+    } catch (err) {
+        console.warn("⚠️ Lỗi lưu dữ liệu vào localStorage:", err);
+    }
 
     return { newUsers, removedUsers };
 }
 
-window.IGTracker = { trackFollowing };
+chrome.runtime.onMessage.addListener((request, sender, sendResponse) => {
+    if (request.action === "GET_USERNAME") {
+        const username = getUsernameTracking();
+        sendResponse({ username });
+    } else if (request.action === "TRACK_FOLLOWING") {
+        trackFollowing().then(result => sendResponse(result));
+        return true; // keep channel open for async
+    }
+});
