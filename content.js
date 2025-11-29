@@ -69,7 +69,78 @@ async function fetchAllFollowing(maxId = 0, profileId = null) {
     }
 }
 
+// async function fetchAllFollowers(maxId = 0, profileId = null) {
+//     const xIgAppId = getIgAppId();
+//     const url = `https://www.instagram.com/api/v1/friendships/${profileId}/followers/?count=25&search_surface=follow_list_page`;
+//     try {
+//         const response = await fetch(url, {
+//             method: "GET",
+//             headers: {
+//                 "accept": "*/*",
+//                 "x-ig-app-id": xIgAppId,
+//             },
+//             credentials: "include"
+//         });
+//         const data = await response.json();
+//         const currentUsernames = data.users.map(u => u.username);
+//         const nextMaxId = data.next_max_id;
+//         if (nextMaxId) {
+//             const nextPageUsernames = await fetchAllFollowers(nextMaxId, profileId);
+//             return currentUsernames.concat(nextPageUsernames);
+//         } else {
+//             return currentUsernames;
+//         }
+//     } catch (error) {
+//         console.error("Fetch error:", error);
+//         return [];
+//     }
+// }
 
+// IndexedDB helpers
+function openDB() {
+    return new Promise((resolve, reject) => {
+        const request = window.indexedDB.open("IGTrackerDB", 1);
+        request.onupgradeneeded = function(event) {
+            const db = event.target.result;
+            if (!db.objectStoreNames.contains("following")) {
+                db.createObjectStore("following");
+            }
+             if (!db.objectStoreNames.contains("followers")) {
+                db.createObjectStore("followers");
+            }
+        };
+        request.onsuccess = function(event) {
+            resolve(event.target.result);
+        };
+        request.onerror = function(event) {
+            reject(event.target.error);
+        };
+    });
+}
+
+function saveToDB(key, value) {
+    return openDB().then(db => {
+        return new Promise((resolve, reject) => {
+            const tx = db.transaction("following", "readwrite");
+            const store = tx.objectStore("following");
+            const req = store.put(value, key);
+            req.onsuccess = () => resolve();
+            req.onerror = () => reject(req.error);
+        });
+    });
+}
+
+function loadFromDB(key) {
+    return openDB().then(db => {
+        return new Promise((resolve, reject) => {
+            const tx = db.transaction("following", "readonly");
+            const store = tx.objectStore("following");
+            const req = store.get(key);
+            req.onsuccess = () => resolve(req.result || []);
+            req.onerror = () => reject(req.error);
+        });
+    });
+}
 
 async function trackFollowing() {
     const userIDToTrack =  await fetchUserIDTracking();
@@ -77,12 +148,12 @@ async function trackFollowing() {
         console.error("⚠️ Không xác định được username để theo dõi.");
         return { newUsers: [], removedUsers: [] };
     }
-    const localStorageSaveKey = `fl_${userIDToTrack}`;
+    const dbKey = `fl_${userIDToTrack}`;
     let previousUsernames = [];
     try {
-        previousUsernames = JSON.parse(localStorage.getItem(localStorageSaveKey) || "[]");
+        previousUsernames = await loadFromDB(dbKey);
     } catch (err) {
-        console.warn("⚠️ Lỗi đọc dữ liệu cũ:", err);
+        console.warn("⚠️ Lỗi đọc dữ liệu cũ từ IndexedDB:", err);
         previousUsernames = [];
     }
     let profileId;
@@ -108,9 +179,9 @@ async function trackFollowing() {
     const newUsers = allUsernames.filter(u => !previousSet.has(u));
     const removedUsers = previousUsernames.filter(u => !allSet.has(u));
     try {
-        localStorage.setItem(localStorageSaveKey, JSON.stringify(allUsernames));
+        await saveToDB(dbKey, allUsernames);
     } catch (err) {
-        console.warn("⚠️ Lỗi lưu dữ liệu vào localStorage:", err);
+        console.warn("⚠️ Lỗi lưu dữ liệu vào IndexedDB:", err);
     }
     return { newUsers, removedUsers };
 }
