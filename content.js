@@ -1,5 +1,10 @@
 window.IGTracker = { trackFollowing };
 
+function getCsrftoken(){
+    const match = document.cookie.match(/csrftoken=([^;]+)/);
+    return match ? match[1] : null;
+}
+
 function getIgAppId() {
     if (window._sharedData && window._sharedData.config) {
         return window._sharedData.config.viewerId || null;
@@ -12,6 +17,16 @@ function getIgAppId() {
     }
     return null;
 }
+
+function getFbLsdToken() {
+    const scripts = Array.from(document.scripts);
+    for (const script of scripts) {
+        const match = script.textContent.match(/\["LSD",\s*\[\],\s*\{["']token["']:\s*["']([a-zA-Z0-9\-_]+)["']\}/);
+        if (match) return match[1];
+    }
+    return null;
+}
+
 
 function getUsernameTracking() {
     const url = window.location.pathname;
@@ -102,6 +117,49 @@ async function fetchAllFollowers(maxId = 0, profileId = null) {
         return [];
     }
 }
+
+async function fetchArticles() {
+    const csrftoken = getCsrftoken();
+    const xIgAppId = getIgAppId();
+    const xFbLsd = getFbLsdToken();
+    const username = getUsernameTracking();
+
+    const headers = {
+        "content-type": "application/x-www-form-urlencoded",
+        "x-csrftoken": csrftoken,
+        "x-ig-app-id": xIgAppId,
+        "x-fb-lsd": xFbLsd,
+    };
+
+    const body = new URLSearchParams({
+        fb_api_req_friendly_name: "PolarisProfilePostsQuery",
+        doc_id: "25017621017900277",
+        variables: JSON.stringify({
+            data: { count: 12 },
+            username: username,
+            __relay_internal__pv__PolarisIsLoggedInrelayprovider: true
+        })
+    });
+
+    try {
+        const response = await fetch("https://www.instagram.com/graphql/query", {
+            method: "POST",
+            headers,
+            credentials: "include",
+            body
+        });
+        const text = await response.text();
+        try {
+            return JSON.parse(text);
+        } catch {
+            return text;
+        }
+    } catch (error) {
+        console.error("fetchArticles error:", error);
+        return null;
+    }
+}
+
 
 // IndexedDB helpers
 function openDB() {
@@ -262,6 +320,7 @@ async function trackFollowers() {
     }
     return { newFollowers, removedFollowers };
 }
+
 
 chrome.runtime.onMessage.addListener((request, sender, sendResponse) => {
     if (request.action === "GET_USERNAME") {
