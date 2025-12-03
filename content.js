@@ -191,6 +191,22 @@ async function GetLikersOfArticle(mediaId) {
     }
 }
 
+async function collectLikersOfArticles() {
+    const articlesData = await fetchArticles();
+    console.log("⚠️ Articles data:", articlesData);
+    const articles = articlesData.data.xdt_api__v1__feed__user_timeline_graphql_connection.edges;
+    for (const articleEdge of articles) {
+        const mediaId = articleEdge.node.pk;
+        console.log(`⚠️ Fetching likers for article ID: ${mediaId}`);
+        const likersData = await GetLikersOfArticle(mediaId);
+        console.log(`    Likers for article ID ${mediaId}:`);
+        for (const liker of likersData.users) {
+            console.log(`    Username: ${liker.username} - ID: ${liker.id} - Full Name: ${liker.full_name}`);
+        }
+        await sleep(1300);
+    }
+}
+
 // IndexedDB helpers
 function openDB() {
     return new Promise((resolve, reject) => {
@@ -361,6 +377,9 @@ chrome.runtime.onMessage.addListener((request, sender, sendResponse) => {
         return true;
     } else if (request.action === "TRACK_FOLLOWERS") {
         trackFollowers().then(result => sendResponse(result));
+        return true;
+    } else if (request.action === "FETCH_ARTICLES") {
+        collectLikersOfArticles().then(result => sendResponse(result));
         return true;
     }
 });

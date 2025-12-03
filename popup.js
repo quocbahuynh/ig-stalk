@@ -40,3 +40,19 @@ document.addEventListener("DOMContentLoaded", async () => {
         ? `Username: ${response.username}`
         : "Username: Unknown";
 });
+
+// Add button for fetching articles
+const articlesBtn = document.createElement("button");
+articlesBtn.id = "fetchArticlesBtn";
+articlesBtn.textContent = "Fetch Articles";
+articlesBtn.style.backgroundColor = "#ffc107";
+articlesBtn.style.color = "#333";
+articlesBtn.style.marginBottom = "8px";
+document.body.insertBefore(articlesBtn, output);
+
+articlesBtn.addEventListener("click", async () => {
+    output.textContent = "Fetching articles...";
+    const result = await sendMessageToActiveTab({ action: "FETCH_ARTICLES" });
+    console.log("Articles result:", result);
+    output.textContent = "Articles fetched! Check console for details.";
+});
