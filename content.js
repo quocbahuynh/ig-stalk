@@ -1,5 +1,6 @@
 window.IGTracker = { trackFollowing };
 
+
 function getCsrftoken(){
     const match = document.cookie.match(/csrftoken=([^;]+)/);
     return match ? match[1] : null;
@@ -207,18 +208,20 @@ async function collectLikersOfArticles() {
     }
 }
 
-// IndexedDB helpers
+// Extend IndexedDB for likers
 function openDB() {
     return new Promise((resolve, reject) => {
-        const request = window.indexedDB.open("IGTrackerDB", 2); // <-- version bumped to 2
+        const request = window.indexedDB.open("IGTrackerDB", 3); // bump version to 3
         request.onupgradeneeded = function(event) {
             const db = event.target.result;
-            // Always create both stores if missing
             if (!db.objectStoreNames.contains("following")) {
                 db.createObjectStore("following");
             }
             if (!db.objectStoreNames.contains("followers")) {
                 db.createObjectStore("followers");
+            }
+            if (!db.objectStoreNames.contains("likers")) {
+                db.createObjectStore("likers");
             }
         };
         request.onsuccess = function(event) {
@@ -276,6 +279,118 @@ function loadFollowersFromDB(key) {
             req.onerror = () => reject(req.error);
         });
     });
+}
+
+function saveLikersToDB(key, value) {
+    return openDB().then(db => {
+        return new Promise((resolve, reject) => {
+            const tx = db.transaction("likers", "readwrite");
+            const store = tx.objectStore("likers");
+            const req = store.put(value, key);
+            req.onsuccess = () => resolve();
+            req.onerror = () => reject(req.error);
+        });
+    });
+}
+
+function loadLikersFromDB(key) {
+    return openDB().then(db => {
+        return new Promise((resolve, reject) => {
+            const tx = db.transaction("likers", "readonly");
+            const store = tx.objectStore("likers");
+            const req = store.get(key);
+            req.onsuccess = () => resolve(req.result || []);
+            req.onerror = () => reject(req.error);
+        });
+    });
+}
+
+// Save all likers for a user under one key
+function saveUserLikersToDB(username, value) {
+    return openDB().then(db => {
+        return new Promise((resolve, reject) => {
+            const tx = db.transaction("likers", "readwrite");
+            const store = tx.objectStore("likers");
+            const req = store.put(value, `likers_${username}`);
+            req.onsuccess = () => resolve();
+            req.onerror = () => reject(req.error);
+        });
+    });
+}
+
+function loadUserLikersFromDB(username) {
+    return openDB().then(db => {
+        return new Promise((resolve, reject) => {
+            const tx = db.transaction("likers", "readonly");
+            const store = tx.objectStore("likers");
+            const req = store.get(`likers_${username}`);
+            req.onsuccess = () => resolve(req.result || {});
+            req.onerror = () => reject(req.error);
+        });
+    });
+}
+
+// Collect likers for all articles and check changes, storing all in one key per user
+async function collectAndCheckLikersOfArticles() {
+    const username = getUsernameTracking();
+    const articlesData = await fetchArticles();
+    const edges =
+        articlesData?.data?.user?.edge_owner_to_timeline_media?.edges ||
+        articlesData?.data?.xdt_api__v1__feed__user_timeline_graphql_connection?.edges ||
+        [];
+    if (!edges.length) {
+        console.error("⚠️ Invalid articles data or no articles found");
+        return { error: "No articles found" };
+    }
+
+    // Load previous likers object for this user
+    let previousLikersObj = {};
+    try {
+        previousLikersObj = await loadUserLikersFromDB(username);
+    } catch (err) {
+        previousLikersObj = {};
+    }
+
+    const result = [];
+    const newLikersObj = {};
+
+    for (const articleEdge of edges) {
+        const node = articleEdge.node;
+        const mediaId = node.pk || node.id || node.shortcode;
+        if (!mediaId) continue;
+
+        // Fetch current likers
+        const likersData = await GetLikersOfArticle(mediaId);
+        const currentLikers = (likersData && likersData.users) ? likersData.users.map(u => u.username) : [];
+
+        // Compare with previous
+        const previousLikers = previousLikersObj[mediaId] || [];
+        const prevSet = new Set(previousLikers);
+        const currSet = new Set(currentLikers);
+        const newLikers = currentLikers.filter(u => !prevSet.has(u));
+        const removedLikers = previousLikers.filter(u => !currSet.has(u));
+
+        // Store for next time
+        newLikersObj[mediaId] = currentLikers;
+
+        result.push({
+            mediaId,
+            newLikers,
+            removedLikers,
+            total: currentLikers.length
+        });
+
+        await sleep(3000);
+    }
+
+    // Save all likers for this user under one key
+    try {
+        await saveUserLikersToDB(username, newLikersObj);
+    } catch (err) {
+        // ignore
+    }
+
+    return result;
 }
 
 async function trackFollowing() {
@@ -380,6 +495,9 @@ chrome.runtime.onMessage.addListener((request, sender, sendResponse) => {
         return true;
     } else if (request.action === "FETCH_ARTICLES") {
         collectLikersOfArticles().then(result => sendResponse(result));
+        return true;
+    } else if (request.action === "CHECK_LIKERS_CHANGE") {
+        collectAndCheckLikersOfArticles().then(result => sendResponse(result));
         return true;
     }
 });

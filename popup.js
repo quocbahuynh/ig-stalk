@@ -56,3 +56,29 @@ articlesBtn.addEventListener("click", async () => {
     console.log("Articles result:", result);
     output.textContent = "Articles fetched! Check console for details.";
 });
+
+const checkLikersBtn = document.createElement("button");
+checkLikersBtn.id = "checkLikersBtn";
+checkLikersBtn.textContent = "Check Likers Change";
+checkLikersBtn.style.backgroundColor = "#6f42c1";
+checkLikersBtn.style.color = "#fff";
+checkLikersBtn.style.marginBottom = "8px";
+document.body.insertBefore(checkLikersBtn, output);
+
+checkLikersBtn.addEventListener("click", async () => {
+    output.textContent = "Checking likers changes...";
+    const result = await sendMessageToActiveTab({ action: "CHECK_LIKERS_CHANGE" });
+    if (!result || result.error) {
+        output.textContent = "No articles or likers data found!";
+        return;
+    }
+    output.innerHTML = "<b>Likers Change Per Post:</b><br>";
+    for (const post of result) {
+        output.innerHTML += `<div>
+            <b>Post:</b> ${post.mediaId}<br>
+            New Likers: ${post.newLikers.join(", ") || "None"}<br>
+            Removed Likers: ${post.removedLikers.join(", ") || "None"}<br>
+            Total: ${post.total}
+        </div><hr>`;
+    }
+});
